@@ -36,6 +36,8 @@ namespace GazeStackWatcher
         int _newPositionCount;
         int _repeatPositionCount;
 
+        int _blickCount;
+
         bool _isEntered;
         bool _isFirstReportExpected;
         bool _isReporting;
@@ -117,7 +119,7 @@ namespace GazeStackWatcher
         {
             get
             {
-                return $"{TimestampString}\tReported total of {_noPositionCount + _newPositionCount + _repeatPositionCount} points, {_repeatPositionCount} repeated positions, {_noPositionCount} null positions between {_startTimestamp:G} to {_lastTickCount:G}";
+                return $"{TimestampString}\tReported total of {_noPositionCount + _newPositionCount + _repeatPositionCount} points, {_repeatPositionCount} repeated positions, {_blickCount} blinks and {_noPositionCount} null positions between {_startTimestamp:G} to {_lastTickCount:G}";
             }
         }
 
@@ -278,6 +280,7 @@ namespace GazeStackWatcher
                     _newPositionCount = position.HasValue ? 1 : 0;
                     _noPositionCount = position.HasValue ? 0 : 1;
                     _repeatPositionCount = 0;
+                    _blickCount = 0;
 
                     _minDelta = TimeSpan.MaxValue;
                     _maxDelta = TimeSpan.MinValue;
@@ -296,6 +299,11 @@ namespace GazeStackWatcher
                     if (_maxDelta < delta)
                     {
                         _maxDelta = delta;
+                    }
+
+                    if (2*_minDelta<delta)
+                    {
+                        _blickCount++;
                     }
 
                     if (_lastPosition.HasValue)
