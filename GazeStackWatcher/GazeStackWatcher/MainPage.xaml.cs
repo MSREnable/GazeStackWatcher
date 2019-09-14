@@ -23,9 +23,10 @@ namespace GazeStackWatcher
         readonly GazeDeviceWatcherPreview _watcher = GazeInputSourcePreview.CreateWatcher();
         int _deviceCount;
 
+        bool _isSourceHoooked;
+
         readonly GazeInputSourcePreview _source = GazeInputSourcePreview.GetForCurrentView();
 
-        bool _isReporting;
         Point? _lastPosition;
         TimeSpan _lastTimestamp;
         TimeSpan _startTimestamp;
@@ -35,10 +36,14 @@ namespace GazeStackWatcher
         int _newPositionCount;
         int _repeatPositionCount;
 
+        bool _isEntered;
+        bool _isFirstReportExpected;
+        bool _isReporting;
         bool _isReportPreviewShown;
 
         TimeSpan _minDelta;
         TimeSpan _maxDelta;
+
 
         readonly DispatcherTimer _reportingTimer = new DispatcherTimer
         {
@@ -67,17 +72,13 @@ namespace GazeStackWatcher
                   _watcher.Removed += OnDeviceRemoved;
                   _watcher.Start();
 
-                  _source.GazeEntered += OnGazeEntered;
-                  _source.GazeMoved += OnGazeMoved;
-                  _source.GazeExited += OnGazeExited;
-
                   Log("Started");
               };
         }
 
         private string TimestampString => DateTimeOffset.Now.ToString("dd/MM/yy HH:mm:ss.ff");
 
-        private void ListInsert(string text)
+        private void ListInsertHead(string text)
         {
             while (MaxListEntries <= TheListBox.Items.Count)
             {
@@ -87,17 +88,22 @@ namespace GazeStackWatcher
             TheListBox.Items.Insert(0, text);
         }
 
+        private void ListReplaceHead(string text)
+        {
+            TheListBox.Items[0] = text;
+        }
+
         private void OnReportingTick(object sender, object e)
         {
             if (_isReportPreviewShown)
             {
-                TheListBox.Items[0] = ReportingText;
+                ListReplaceHead(ReportingText);
             }
             else
             {
-                ListInsert(ReportingText);
+                ListInsertHead(ReportingText);
+                _isReportPreviewShown = true;
             }
-            _isReportPreviewShown = true;
 
             var pauseTheshold = TimeSpan.FromMilliseconds(Environment.TickCount) - InputPauseTimeout;
 
@@ -123,11 +129,12 @@ namespace GazeStackWatcher
 
                 if (_isReportPreviewShown)
                 {
-                    TheListBox.Items[0] = text;
+                    ListReplaceHead(text);
+                    _isReportPreviewShown = false;
                 }
                 else
                 {
-                    TheListBox.Items.Insert(0, text);
+                    ListInsertHead(text);
                 }
 
                 lock (_logBuffer)
@@ -140,7 +147,7 @@ namespace GazeStackWatcher
             }
 
             var timestampedMessage = $"{TimestampString}\t{message}";
-            ListInsert(timestampedMessage);
+            ListInsertHead(timestampedMessage);
 
             lock (_logBuffer)
             {
@@ -202,6 +209,15 @@ namespace GazeStackWatcher
         {
             _deviceCount++;
             Log($"Device added, count={_deviceCount}", args.Device);
+
+            if (!_isSourceHoooked)
+            {
+                _source.GazeEntered += OnGazeEntered;
+                _source.GazeMoved += OnGazeMoved;
+                _source.GazeExited += OnGazeExited;
+
+                _isSourceHoooked = true;
+            }
         }
 
         private void OnDeviceRemoved(GazeDeviceWatcherPreview sender, GazeDeviceWatcherRemovedPreviewEventArgs args)
@@ -223,7 +239,10 @@ namespace GazeStackWatcher
         private void OnGazeEntered(GazeInputSourcePreview sender, GazeEnteredPreviewEventArgs args)
         {
             _lastPosition = args.CurrentPoint.EyeGazePosition;
-            Log("Gaze entered", args.CurrentPoint);
+            Log(_isEntered ? "Enter while already entered" : "Gaze entered", args.CurrentPoint);
+
+            _isEntered = true;
+            _isFirstReportExpected = true;
         }
 
         private void OnGazeMoved(GazeInputSourcePreview sender, GazeMovedPreviewEventArgs args)
@@ -241,13 +260,20 @@ namespace GazeStackWatcher
 
                 if (!_isReporting)
                 {
-                    _isReporting = true;
                     _startTimestamp = timestamp;
-                    if (_lastPosition.HasValue != position.HasValue ||
-                        (_lastPosition.HasValue && _lastPosition.Value == position.Value))
+                    if (!_isEntered)
+                    {
+                        Log("Gaze report without enter");
+                        _isEntered = true;
+                    }
+                    else if (_isFirstReportExpected && (_lastPosition.HasValue != position.HasValue ||
+                        (_lastPosition.HasValue &&
+                        !(_lastPosition.Value.X == position.Value.X &&
+                        _lastPosition.Value.Y == position.Value.Y))))
                     {
                         Log("First report after enter is inconsistent", point);
                     }
+                    _isFirstReportExpected = false;
 
                     _newPositionCount = position.HasValue ? 1 : 0;
                     _noPositionCount = position.HasValue ? 0 : 1;
@@ -255,6 +281,8 @@ namespace GazeStackWatcher
 
                     _minDelta = TimeSpan.MaxValue;
                     _maxDelta = TimeSpan.MinValue;
+
+                    _isReporting = true;
 
                     _reportingTimer.Start();
                 }
@@ -308,8 +336,9 @@ namespace GazeStackWatcher
 
         private void OnGazeExited(GazeInputSourcePreview sender, GazeExitedPreviewEventArgs args)
         {
-            _isReporting = false;
-            Log("Gaze exited", args.CurrentPoint);
+            Log(_isEntered ? "Gaze exited" : "Unexpected gaze exit without prior enter", args.CurrentPoint);
+
+            _isEntered = false;
         }
     }
 }
